@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CF SHIVA V3 — Web</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#f4f6f8;color:#17202a}
+.wrap{max-width:1000px;margin:40px auto;padding:0 18px}.card{background:white;border-radius:14px;padding:24px;box-shadow:0 5px 22px #00000012}
+h1{margin:0 0 6px}.muted{color:#667085;margin-top:0}textarea{width:100%;min-height:220px;padding:14px;border:1px solid #ccd2d9;border-radius:10px;font-size:15px;resize:vertical}
+button{margin-top:14px;padding:12px 20px;border:0;border-radius:9px;background:#1f2937;color:#fff;font-weight:700;cursor:pointer}
+button:disabled{opacity:.55;cursor:not-allowed}.bar{height:12px;background:#e5e7eb;border-radius:10px;overflow:hidden;margin:18px 0 8px}.fill{height:100%;width:0;background:#2563eb;transition:width .2s}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.panel{background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;padding:14px}.logs{white-space:pre-wrap;max-height:260px;overflow:auto;font:13px monospace}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>CF SHIVA V3</h1>
+<p class="muted">Versão web preparada para hospedagem no Render.</p>
+<textarea id="texto" placeholder="Cole aqui as mensagens/processos, uma por linha..."></textarea>
+<button id="btn" onclick="processar()">Processar</button>
+<div class="bar"><div id="fill" class="fill"></div></div>
+<div id="status">Aguardando.</div>
+<div class="grid">
+<div class="panel"><b>Itens identificados</b><div id="items">—</div></div>
+<div class="panel"><b>Log</b><div id="logs" class="logs">—</div></div>
+</div>
+</div>
+</div>
+<script>
+let timer=null;
+async function processar(){
+ const texto=document.getElementById('texto').value;
+ const btn=document.getElementById('btn');
+ btn.disabled=true;
+ document.getElementById('status').textContent='Iniciando...';
+ const r=await fetch('/api/processar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({texto})});
+ const d=await r.json();
+ if(!r.ok){alert(d.erro||'Erro');btn.disabled=false;return}
+ timer=setInterval(()=>poll(d.job_id),300);
+}
+async function poll(id){
+ const r=await fetch('/api/status/'+id); const d=await r.json();
+ if(!r.ok)return;
+ const pct=d.total?Math.round(d.done/d.total*100):100;
+ document.getElementById('fill').style.width=pct+'%';
+ document.getElementById('status').textContent=d.status+' — '+d.done+'/'+d.total;
+ document.getElementById('items').innerHTML=(d.items||[]).map(x=>`<div>${escapeHtml(x.entrada)}</div>`).join('')||'—';
+ document.getElementById('logs').textContent=(d.logs||[]).join('\\n')||'—';
+ if(d.status==='concluido'){clearInterval(timer);document.getElementById('btn').disabled=false}
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+</script>
+</body>
+</html>
