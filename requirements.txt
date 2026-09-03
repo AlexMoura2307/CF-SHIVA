@@ -1,2 +1,3 @@
 Flask>=3.0,<4
 selenium>=4.20,<5
+gunicorn>=21,<22
