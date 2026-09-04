@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: cf-shiva-web
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    envVars:
-      - key: PORT
-        value: 10000
