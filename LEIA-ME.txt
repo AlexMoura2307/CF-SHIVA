@@ -1,7 +1,0 @@
-CF SHIVA - V3
-
-1. Execute INSTALAR.bat uma vez para instalar as dependencias e criar o atalho "CF SHIVA" na Area de Trabalho.
-2. Depois, use o atalho "CF SHIVA" para abrir o programa.
-3. O icone CF_SHIVA.ico acompanha o programa e tambem aparece na janela do aplicativo.
-
-Se o atalho nao for criado automaticamente, execute CRIAR_ATALHO.bat.
