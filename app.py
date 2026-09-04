@@ -24,6 +24,7 @@ try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.common.exceptions import StaleElementReferenceException
     SELENIUM_OK = True
 except Exception:
     SELENIUM_OK = False
@@ -77,41 +78,105 @@ def make_driver(download_dir: Path):
     return driver
 
 
+def _visible_inputs(driver):
+    """Fresh query of visible/enabled inputs. Never reuses stale references."""
+    out = []
+    try:
+        inputs = driver.find_elements(By.CSS_SELECTOR, 'input')
+    except StaleElementReferenceException:
+        return out
+    for el in inputs:
+        try:
+            if el.is_displayed() and el.is_enabled():
+                out.append(el)
+        except StaleElementReferenceException:
+            continue
+    return out
+
+
+def _field_attrs(el):
+    try:
+        return ' '.join(str(el.get_attribute(a) or '') for a in
+                         ['name', 'id', 'placeholder', 'aria-label', 'type']).lower()
+    except StaleElementReferenceException:
+        return ''
+
+
+def _type_into_field(driver, matcher, value, log, label, attempts=6):
+    """Re-locates the field fresh on every attempt so a page re-render (masks,
+    validation JS, etc.) between the two fields never uses a stale reference."""
+    for attempt in range(attempts):
+        candidates = [el for el in _visible_inputs(driver) if matcher(_field_attrs(el))]
+        if not candidates:
+            time.sleep(0.3)
+            continue
+        try:
+            candidates[0].clear()
+            candidates[0].send_keys(value)
+            return True
+        except StaleElementReferenceException:
+            log(f'  Campo "{label}" mudou na tela, tentando de novo ({attempt + 1}/{attempts})...')
+            time.sleep(0.3)
+            continue
+    return False
+
+
+def _type_by_position(driver, index, value, log, label, attempts=6):
+    for attempt in range(attempts):
+        candidates = [el for el in _visible_inputs(driver)
+                      if (el.get_attribute('type') or 'text').lower() in ('text', 'number', 'password')]
+        if len(candidates) <= index:
+            time.sleep(0.3)
+            continue
+        try:
+            candidates[index].clear()
+            candidates[index].send_keys(value)
+            return True
+        except StaleElementReferenceException:
+            log(f'  Campo "{label}" (posição {index}) mudou na tela, tentando de novo ({attempt + 1}/{attempts})...')
+            time.sleep(0.3)
+            continue
+    return False
+
+
 def fill_inputs(driver, cf, chave, log):
-    inputs = driver.find_elements(By.CSS_SELECTOR, 'input')
-    visible = [x for x in inputs if x.is_displayed() and x.is_enabled()]
-    log(f'  Campos encontrados na página: {len(visible)}')
-    cf_done = key_done = False
-    for el in visible:
-        attrs = ' '.join(str(el.get_attribute(a) or '') for a in
-                          ['name', 'id', 'placeholder', 'aria-label', 'type']).lower()
-        if not cf_done and any(k in attrs for k in ['numero', 'número', 'certificado', 'certificate', 'fito']) \
-                and 'senha' not in attrs and 'chave' not in attrs:
-            el.clear(); el.send_keys(cf); cf_done = True
-        elif not key_done and any(k in attrs for k in ['senha', 'chave', 'access', 'acesso', 'password']):
-            el.clear(); el.send_keys(chave); key_done = True
-    if not cf_done or not key_done:
-        candidates = [x for x in visible if (x.get_attribute('type') or 'text').lower() in ('text', 'number', 'password')]
-        if len(candidates) >= 2:
-            if not cf_done:
-                candidates[0].clear(); candidates[0].send_keys(cf); cf_done = True
-            if not key_done:
-                candidates[1].clear(); candidates[1].send_keys(chave); key_done = True
+    log(f'  Campos encontrados na página: {len(_visible_inputs(driver))}')
+
+    cf_matcher = lambda attrs: (any(k in attrs for k in ['numero', 'número', 'certificado', 'certificate', 'fito'])
+                                 and 'senha' not in attrs and 'chave' not in attrs)
+    key_matcher = lambda attrs: any(k in attrs for k in ['senha', 'chave', 'access', 'acesso', 'password'])
+
+    cf_done = _type_into_field(driver, cf_matcher, cf, log, 'Número')
+    time.sleep(0.3)  # deixa a página assentar antes de mexer no segundo campo
+    key_done = _type_into_field(driver, key_matcher, chave, log, 'Chave')
+
+    if not cf_done:
+        cf_done = _type_by_position(driver, 0, cf, log, 'Número (fallback)')
+    if not key_done:
+        key_done = _type_by_position(driver, 1, chave, log, 'Chave (fallback)')
+
     if not (cf_done and key_done):
         raise RuntimeError('Não consegui identificar automaticamente os campos Número e Senha/Chave.')
 
 
-def click_consult(driver, log):
+def click_consult(driver, log, attempts=4):
     texts = ['consultar', 'consulta', 'pesquisar', 'buscar', 'emitir', 'gerar', 'visualizar']
-    for b in driver.find_elements(By.CSS_SELECTOR, 'button, input[type=submit], input[type=button], a'):
-        if not b.is_displayed() or not b.is_enabled():
+    for attempt in range(attempts):
+        try:
+            for b in driver.find_elements(By.CSS_SELECTOR, 'button, input[type=submit], input[type=button], a'):
+                if not b.is_displayed() or not b.is_enabled():
+                    continue
+                t = ((b.text or '') + ' ' + (b.get_attribute('value') or '')).strip().lower()
+                if any(w in t for w in texts):
+                    driver.execute_script('arguments[0].click();', b); return
+            forms = driver.find_elements(By.TAG_NAME, 'form')
+            if forms:
+                driver.execute_script("arguments[0].submit();", forms[-1]); return
+            raise RuntimeError('Não encontrei o botão de consulta no SHIVA.')
+        except StaleElementReferenceException:
+            log(f'  Botão de consulta mudou na tela, tentando de novo ({attempt + 1}/{attempts})...')
+            time.sleep(0.3)
             continue
-        t = ((b.text or '') + ' ' + (b.get_attribute('value') or '')).strip().lower()
-        if any(w in t for w in texts):
-            driver.execute_script('arguments[0].click();', b); return
-    forms = driver.find_elements(By.TAG_NAME, 'form')
-    if forms:
-        driver.execute_script("arguments[0].submit();", forms[-1]); return
     raise RuntimeError('Não encontrei o botão de consulta no SHIVA.')
 
 
